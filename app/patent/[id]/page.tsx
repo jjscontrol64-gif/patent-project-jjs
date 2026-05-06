@@ -20,7 +20,7 @@ export default async function PatentDetailPage({ params, searchParams }: PatentD
       <header className="border-b border-brand-line bg-white/90 backdrop-blur">
         <div className="mx-auto flex max-w-6xl flex-col gap-4 px-4 py-4 md:flex-row md:items-center">
           <Link href="/" className="text-2xl font-bold tracking-tight text-brand-ink">
-            <span className="text-brand-blue">JP</span>특허검색
+            <span className="text-brand-blue">JP</span> 특허검색
           </Link>
           <PatentSearchForm variant="compact" initialValues={normalized} />
         </div>
@@ -49,7 +49,7 @@ export default async function PatentDetailPage({ params, searchParams }: PatentD
 
           <section className="mb-8">
             <h2 className="mb-4 inline-block border-b-2 border-brand-blue pb-2 text-base font-semibold text-brand-ink">
-              서지 정보
+              기본 정보
             </h2>
             <div className="overflow-hidden rounded-2xl border border-brand-line">
               <table className="w-full border-collapse text-sm">
@@ -61,7 +61,7 @@ export default async function PatentDetailPage({ params, searchParams }: PatentD
                     ["발명자", detailResponse.item.inventors.join(", ")],
                     ["출원일", detailResponse.item.applicationDate || "-"],
                     ["공개일", detailResponse.item.publicationDate || "-"],
-                    ["IPC 분류", detailResponse.item.ipcClasses.join(" · ") || "-"],
+                    ["IPC 분류", detailResponse.item.ipcClasses.join(", ") || "-"],
                     ["국가", "일본 (JP)"],
                   ].map(([label, value]) => (
                     <tr key={label} className="border-b border-brand-line last:border-b-0">
@@ -90,7 +90,7 @@ export default async function PatentDetailPage({ params, searchParams }: PatentD
 
             <div>
               <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
-                일본어 원문
+                원문
               </div>
               <p className="px-1 text-sm leading-8 text-brand-muted">{detailResponse.item.abstractJa}</p>
             </div>
@@ -103,7 +103,7 @@ export default async function PatentDetailPage({ params, searchParams }: PatentD
               rel="noreferrer"
               className="inline-flex items-center gap-2 rounded-md bg-brand-blue px-5 py-3 text-sm font-medium text-white"
             >
-              J-PlatPat 원문 보기
+              J-PlatPat 보기
             </a>
             <a
               href={detailResponse.item.espacenetUrl}
@@ -111,7 +111,7 @@ export default async function PatentDetailPage({ params, searchParams }: PatentD
               rel="noreferrer"
               className="inline-flex items-center gap-2 rounded-md border border-[#dadce0] bg-white px-5 py-3 text-sm font-medium text-brand-blue"
             >
-              Espacenet 보기
+              Google Patents 보기
             </a>
           </div>
         </section>

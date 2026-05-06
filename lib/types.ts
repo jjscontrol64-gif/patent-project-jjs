@@ -1,4 +1,4 @@
-export type SourceKind = "mock" | "epo";
+export type SourceKind = "mock" | "serpapi";
 
 export type PatentSummary = {
   id: string;

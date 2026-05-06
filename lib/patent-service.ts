@@ -1,113 +1,62 @@
 import { mockPatentDetails } from "@/lib/mock-data";
 import { PatentDetail, PatentDetailResponse, PatentSummary, SearchParams, SearchResponse } from "@/lib/types";
-import { cleanPatentNumber, compactText, decodeHtmlEntities, normalizeSearchParams } from "@/lib/utils";
+import { cleanPatentNumber, compactText, decodeHtmlEntities, isPatentNumberLike, normalizeSearchParams } from "@/lib/utils";
 
-const EPO_TOKEN_URL = "https://ops.epo.org/3.2/auth/accesstoken";
-const EPO_SEARCH_URL = "https://ops.epo.org/3.2/rest-services/published-data/search";
-const EPO_PUBLICATION_BASE = "https://ops.epo.org/3.2/rest-services/published-data/publication/docdb";
+const SERPAPI_URL = "https://serpapi.com/search.json";
 const PAPAGO_URL = "https://openapi.naver.com/v1/papago/n2mt";
 
 const MOCK_LATENCY_MS = 140;
+const SERPAPI_MIN_PAGE_SIZE = 10;
 
-let cachedToken: { value: string; expiresAt: number } | null = null;
+type SerpApiSearchResponse = {
+  organic_results?: SerpApiOrganicResult[];
+  search_information?: {
+    total_results?: number;
+  };
+  search_metadata?: {
+    total_time_taken?: number;
+  };
+  error?: string;
+};
 
-function hasEpoCredentials() {
-  return Boolean(process.env.EPO_OPS_CONSUMER_KEY && process.env.EPO_OPS_CONSUMER_SECRET);
+type SerpApiOrganicResult = {
+  patent_id?: string;
+  publication_number?: string;
+  application_number?: string;
+  title?: string;
+  snippet?: string;
+  assignee?: string;
+  filing_date?: string;
+  publication_date?: string;
+  patent_link?: string;
+};
+
+type SerpApiDetailsResponse = {
+  patent_id?: string;
+  publication_number?: string;
+  application_number?: string;
+  title?: string;
+  assignee?: string;
+  assignees?: Array<string | { name?: string }>;
+  inventors?: Array<string | { name?: string }>;
+  filing_date?: string;
+  publication_date?: string;
+  abstract?: string;
+  abstract_original?: string;
+  classifications?: Array<string | { code?: string }>;
+  patent_link?: string;
+  search_metadata?: {
+    total_time_taken?: number;
+  };
+  error?: string;
+};
+
+function hasSerpApiCredentials() {
+  return Boolean(process.env.SERPAPI_API_KEY);
 }
 
 function hasPapagoCredentials() {
   return Boolean(process.env.NAVER_CLIENT_ID && process.env.NAVER_CLIENT_SECRET);
-}
-
-async function getEpoAccessToken(): Promise<string> {
-  if (cachedToken && cachedToken.expiresAt > Date.now()) {
-    return cachedToken.value;
-  }
-
-  const credentials = `${process.env.EPO_OPS_CONSUMER_KEY}:${process.env.EPO_OPS_CONSUMER_SECRET}`;
-  const basic = Buffer.from(credentials).toString("base64");
-  const response = await fetch(EPO_TOKEN_URL, {
-    method: "POST",
-    headers: {
-      Authorization: `Basic ${basic}`,
-      "Content-Type": "application/x-www-form-urlencoded",
-    },
-    body: "grant_type=client_credentials",
-    cache: "no-store",
-  });
-
-  if (!response.ok) {
-    throw new Error(`EPO token request failed: ${response.status}`);
-  }
-
-  const payload = (await response.json()) as { access_token?: string; expires_in?: number };
-  if (!payload.access_token) {
-    throw new Error("EPO token response did not include access_token");
-  }
-
-  const expiresInMs = Math.max((payload.expires_in ?? 1200) - 60, 60) * 1000;
-  cachedToken = {
-    value: payload.access_token,
-    expiresAt: Date.now() + expiresInMs,
-  };
-
-  return payload.access_token;
-}
-
-function parseTagValue(xml: string, tagName: string): string | undefined {
-  const pattern = new RegExp(
-    `<(?:[\\w-]+:)?${tagName}\\b[^>]*>([\\s\\S]*?)<\\/(?:[\\w-]+:)?${tagName}>`,
-    "i",
-  );
-  const match = xml.match(pattern);
-  return match ? compactText(decodeHtmlEntities(match[1].replace(/<[^>]+>/g, " "))) : undefined;
-}
-
-function parseTagValues(xml: string, tagName: string): string[] {
-  const pattern = new RegExp(
-    `<(?:[\\w-]+:)?${tagName}\\b[^>]*>([\\s\\S]*?)<\\/(?:[\\w-]+:)?${tagName}>`,
-    "gi",
-  );
-  return Array.from(xml.matchAll(pattern))
-    .map((match) => compactText(decodeHtmlEntities(match[1].replace(/<[^>]+>/g, " "))))
-    .filter(Boolean);
-}
-
-function parseDocumentBlocks(xml: string): string[] {
-  return Array.from(
-    xml.matchAll(/<(?:[\w-]+:)?exchange-document\b[\s\S]*?<\/(?:[\w-]+:)?exchange-document>/gi),
-  ).map((match) => match[0]);
-}
-
-function parseDateFromReference(xml: string, referenceName: "publication-reference" | "application-reference") {
-  const section = new RegExp(
-    `<(?:[\\w-]+:)?${referenceName}\\b[^>]*>([\\s\\S]*?)<\\/(?:[\\w-]+:)?${referenceName}>`,
-    "i",
-  ).exec(xml)?.[1];
-
-  const raw = section ? parseTagValue(section, "date") : undefined;
-  if (!raw) return "";
-  return raw.length === 8 ? `${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}` : raw;
-}
-
-function parsePublicationNumber(xml: string): string {
-  const attrs =
-    /<(?:[\w-]+:)?exchange-document\b[^>]*country="([^"]+)"[^>]*doc-number="([^"]+)"[^>]*kind="([^"]+)"/i.exec(xml) ??
-    /<(?:[\w-]+:)?exchange-document\b[^>]*doc-number="([^"]+)"[^>]*country="([^"]+)"[^>]*kind="([^"]+)"/i.exec(xml);
-
-  if (attrs) {
-    if (attrs.length === 4) {
-      if (/^[A-Z]{2}$/i.test(attrs[1])) {
-        return `${attrs[1]}${attrs[2]}${attrs[3]}`;
-      }
-      return `${attrs[2]}${attrs[1]}${attrs[3]}`;
-    }
-  }
-
-  const country = parseTagValue(xml, "country") ?? "JP";
-  const docNumber = parseTagValue(xml, "doc-number") ?? "";
-  const kind = parseTagValue(xml, "kind") ?? "";
-  return `${country}${docNumber}${kind}`;
 }
 
 function toSummary(detail: PatentDetail): PatentSummary {
@@ -165,7 +114,7 @@ function filterMockPatents(params: SearchParams) {
 
 async function searchMockPatents(params: SearchParams): Promise<SearchResponse> {
   const page = params.page ?? 1;
-  const pageSize = params.pageSize ?? 5;
+  const pageSize = params.pageSize ?? SERPAPI_MIN_PAGE_SIZE;
   const items = filterMockPatents(params).sort((a, b) => b.publicationDate.localeCompare(a.publicationDate));
   const start = (page - 1) * pageSize;
   const paged = items.slice(start, start + pageSize).map(toSummary);
@@ -179,7 +128,7 @@ async function searchMockPatents(params: SearchParams): Promise<SearchResponse> 
     pageSize,
     elapsedMs: MOCK_LATENCY_MS,
     source: "mock",
-    notice: "EPO OPS 또는 Papago 인증 정보가 없어 샘플 데이터로 응답했습니다.",
+    notice: "SERPAPI_API_KEY가 없어 샘플 데이터로 응답했습니다.",
   };
 }
 
@@ -197,7 +146,7 @@ async function getMockPatentDetail(id: string): Promise<PatentDetailResponse> {
   return {
     item: matched,
     source: "mock",
-    notice: "EPO OPS 또는 Papago 인증 정보가 없어 샘플 상세 데이터를 보여주고 있습니다.",
+    notice: "SERPAPI_API_KEY가 없어 샘플 상세 데이터를 보여주고 있습니다.",
   };
 }
 
@@ -233,182 +182,307 @@ async function translateText(text: string): Promise<string> {
   return payload.message?.result?.translatedText ?? text;
 }
 
-function buildOpsQuery(params: SearchParams) {
-  const clauses = ["ct=JP"];
+async function fetchSerpApi<T extends { error?: string }>(params: Record<string, string | number | undefined>): Promise<T> {
+  const query = new URLSearchParams();
 
-  if (params.q) {
-    const escaped = params.q.replaceAll('"', "");
-    clauses.push(`(ti="${escaped}" or ab="${escaped}" or pa="${escaped}")`);
+  for (const [key, value] of Object.entries(params)) {
+    if (value === undefined || value === "") continue;
+    query.set(key, String(value));
   }
 
-  if (params.patentNumber) {
-    const patentNumber = cleanPatentNumber(params.patentNumber).replace(/^JP/, "");
-    clauses.push(`pn=${patentNumber}`);
-  }
+  query.set("api_key", process.env.SERPAPI_API_KEY as string);
 
-  if (params.ipc) {
-    clauses.push(`ipc=${params.ipc.replace(/\s+/g, "")}`);
-  }
-
-  if (params.dateFrom || params.dateTo) {
-    const from = (params.dateFrom ?? "1900-01-01").replaceAll("-", "");
-    const to = (params.dateTo ?? "2099-12-31").replaceAll("-", "");
-    clauses.push(`pd within "${from},${to}"`);
-  }
-
-  return clauses.join(" AND ");
-}
-
-async function fetchEpoSearch(params: SearchParams): Promise<SearchResponse> {
-  const token = await getEpoAccessToken();
-  const page = params.page ?? 1;
-  const pageSize = params.pageSize ?? 5;
-  const start = (page - 1) * pageSize + 1;
-  const end = start + pageSize - 1;
-  const query = buildOpsQuery(params);
-  const startedAt = Date.now();
-
-  const response = await fetch(`${EPO_SEARCH_URL}?q=${encodeURIComponent(query)}&Range=${start}-${end}`, {
-    headers: {
-      Authorization: `Bearer ${token}`,
-      Accept: "application/xml",
-    },
+  const response = await fetch(`${SERPAPI_URL}?${query.toString()}`, {
     cache: "no-store",
   });
 
   if (!response.ok) {
-    throw new Error(`EPO search failed: ${response.status}`);
+    throw new Error(`SerpAPI request failed: ${response.status}`);
   }
 
-  const xml = await response.text();
-  const totalRaw =
-    /total-result-count="(\d+)"/i.exec(xml)?.[1] ??
-    /<ops:total-result-count>(\d+)<\/ops:total-result-count>/i.exec(xml)?.[1] ??
-    String(parseDocumentBlocks(xml).length);
-  const documents = parseDocumentBlocks(xml);
+  const payload = (await response.json()) as T;
+  if (payload.error) {
+    throw new Error(payload.error);
+  }
 
-  const items = await Promise.all(
-    documents.map(async (documentXml) => {
-      const titleJa = parseTagValues(documentXml, "invention-title")[0] ?? "제목 없음";
-      const titleKo = await translateText(titleJa);
-      const applicant =
-        parseTagValues(documentXml, "applicant-name")[0] ??
-        parseTagValues(documentXml, "name")[0] ??
-        "출원인 정보 없음";
-      const ipcClasses = parseTagValues(documentXml, "classification-ipcr")
-        .map((value) => value.replace(/\s+/g, " ").trim())
-        .slice(0, 3);
-      const publicationNumber = parsePublicationNumber(documentXml);
-      const applicationNumber = parseTagValue(documentXml, "doc-number") ?? publicationNumber;
+  return payload;
+}
 
+function normalizeDate(value?: string): string {
+  if (!value) return "";
+  return /^\d{8}$/.test(value) ? `${value.slice(0, 4)}-${value.slice(4, 6)}-${value.slice(6, 8)}` : value;
+}
+
+function normalizePatentId(id: string): string {
+  return id.startsWith("patent/") ? id : `patent/${cleanPatentNumber(id)}`;
+}
+
+function getPublicationNumber(value?: string): string {
+  if (!value) return "";
+  const normalized = value.replace(/^patent\//i, "").split("/")[0] ?? value;
+  return cleanPatentNumber(normalized);
+}
+
+function extractNames(values?: Array<string | { name?: string }>): string[] {
+  if (!values) return [];
+
+  return values
+    .map((value) => (typeof value === "string" ? value : value.name ?? ""))
+    .map((value) => compactText(decodeHtmlEntities(value)))
+    .filter(Boolean);
+}
+
+function extractClassificationCodes(values?: Array<string | { code?: string }>): string[] {
+  if (!values) return [];
+
+  return values
+    .map((value) => (typeof value === "string" ? value : value.code ?? ""))
+    .map((value) => compactText(value))
+    .filter(Boolean);
+}
+
+function buildGooglePatentsUrl(publicationNumber: string): string {
+  return `https://patents.google.com/patent/${cleanPatentNumber(publicationNumber)}`;
+}
+
+function buildSearchQuery(params: SearchParams): string {
+  const queryParts = [params.q?.trim(), params.patentNumber ? cleanPatentNumber(params.patentNumber) : undefined, params.ipc?.trim()]
+    .filter(Boolean)
+    .map((value) => value!.replaceAll('"', " "));
+
+  return queryParts.length > 0 ? queryParts.join(" ") : "JP";
+}
+
+function getPatentNumberCandidate(params: SearchParams): string | undefined {
+  if (params.patentNumber?.trim()) {
+    return params.patentNumber.trim();
+  }
+
+  if (params.q?.trim() && isPatentNumberLike(params.q)) {
+    return params.q.trim();
+  }
+
+  return undefined;
+}
+
+function matchesSearchFilters(item: PatentSummary, params: SearchParams): boolean {
+  const normalizedIpc = params.ipc?.toLowerCase();
+  const fromMatched = !params.dateFrom || item.applicationDate >= params.dateFrom;
+  const toMatched = !params.dateTo || item.applicationDate <= params.dateTo;
+  const ipcMatched =
+    !normalizedIpc || item.ipcClasses.some((ipc) => ipc.toLowerCase().startsWith(normalizedIpc));
+
+  return fromMatched && toMatched && ipcMatched;
+}
+
+async function tryDirectPatentNumberSearch(params: SearchParams): Promise<SearchResponse | null> {
+  const candidate = getPatentNumberCandidate(params);
+  if (!candidate) return null;
+
+  try {
+    const startedAt = Date.now();
+    const detail = await fetchSerpApiDetail(candidate);
+    const summary = toSummary(detail.item);
+
+    if (!matchesSearchFilters(summary, params)) {
       return {
-        id: publicationNumber,
-        publicationNumber,
-        applicationNumber,
-        titleJa,
-        titleKo,
-        applicant,
-        applicationDate: parseDateFromReference(documentXml, "application-reference"),
-        publicationDate: parseDateFromReference(documentXml, "publication-reference"),
-        ipcClasses,
-        country: "JP" as const,
+        items: [],
+        totalResults: 0,
+        page: params.page ?? 1,
+        pageSize: Math.max(params.pageSize ?? SERPAPI_MIN_PAGE_SIZE, SERPAPI_MIN_PAGE_SIZE),
+        elapsedMs: Date.now() - startedAt,
+        source: "serpapi",
+        notice: "특허번호로 직접 조회했지만 현재 날짜 또는 IPC 조건에는 맞지 않았습니다.",
       };
-    }),
-  );
+    }
+
+    const notices = ["특허번호 형식의 검색어로 판단해 상세 API에서 직접 조회했습니다."];
+    if (detail.notice) {
+      notices.push(detail.notice);
+    }
+
+    return {
+      items: [summary],
+      totalResults: 1,
+      page: params.page ?? 1,
+      pageSize: Math.max(params.pageSize ?? SERPAPI_MIN_PAGE_SIZE, SERPAPI_MIN_PAGE_SIZE),
+      elapsedMs: Date.now() - startedAt,
+      source: "serpapi",
+      notice: notices.join(" "),
+    };
+  } catch (error) {
+    console.error("[SerpAPI] direct patent lookup failed", {
+      candidate,
+      message: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  }
+}
+
+async function fetchSerpApiDetailByPatentId(patentId: string): Promise<SerpApiDetailsResponse> {
+  return fetchSerpApi<SerpApiDetailsResponse>({
+    engine: "google_patents_details",
+    patent_id: patentId,
+  });
+}
+
+async function mapSearchResultToSummary(item: SerpApiOrganicResult): Promise<PatentSummary> {
+  const fallbackPublicationNumber =
+    cleanPatentNumber(item.publication_number ?? item.application_number ?? getPublicationNumber(item.patent_id) ?? "JP");
+  const patentId = item.patent_id ? normalizePatentId(item.patent_id) : normalizePatentId(fallbackPublicationNumber);
+
+  try {
+    const detail = await fetchSerpApiDetailByPatentId(patentId);
+    const publicationNumber = cleanPatentNumber(
+      detail.publication_number ?? item.publication_number ?? getPublicationNumber(detail.patent_id) ?? fallbackPublicationNumber,
+    );
+    const titleJa = compactText(decodeHtmlEntities(detail.title ?? item.title ?? "제목 없음"));
+    const titleKo = await translateText(titleJa);
+
+    return {
+      id: publicationNumber,
+      publicationNumber,
+      applicationNumber: cleanPatentNumber(detail.application_number ?? item.application_number ?? publicationNumber),
+      titleJa,
+      titleKo,
+      applicant:
+        compactText(
+          decodeHtmlEntities(
+            detail.assignee ??
+              extractNames(detail.assignees)[0] ??
+              item.assignee ??
+              "출원인 정보 없음",
+          ),
+        ) || "출원인 정보 없음",
+      applicationDate: normalizeDate(detail.filing_date ?? item.filing_date),
+      publicationDate: normalizeDate(detail.publication_date ?? item.publication_date),
+      ipcClasses: extractClassificationCodes(detail.classifications).slice(0, 5),
+      country: "JP",
+    };
+  } catch {
+    const titleJa = compactText(decodeHtmlEntities(item.title ?? "제목 없음"));
+    const titleKo = await translateText(titleJa);
+
+    return {
+      id: fallbackPublicationNumber,
+      publicationNumber: fallbackPublicationNumber,
+      applicationNumber: cleanPatentNumber(item.application_number ?? fallbackPublicationNumber),
+      titleJa,
+      titleKo,
+      applicant: compactText(decodeHtmlEntities(item.assignee ?? "출원인 정보 없음")) || "출원인 정보 없음",
+      applicationDate: normalizeDate(item.filing_date),
+      publicationDate: normalizeDate(item.publication_date),
+      ipcClasses: [],
+      country: "JP",
+    };
+  }
+}
+
+async function fetchSerpApiSearch(params: SearchParams): Promise<SearchResponse> {
+  const directSearch = await tryDirectPatentNumberSearch(params);
+  if (directSearch) {
+    return directSearch;
+  }
+
+  const page = params.page ?? 1;
+  const pageSize = Math.max(params.pageSize ?? SERPAPI_MIN_PAGE_SIZE, SERPAPI_MIN_PAGE_SIZE);
+  const startedAt = Date.now();
+
+  const response = await fetchSerpApi<SerpApiSearchResponse>({
+    engine: "google_patents",
+    q: buildSearchQuery(params),
+    page,
+    num: pageSize,
+    language: "JAPANESE",
+    country: "JP",
+    after: params.dateFrom,
+    before: params.dateTo,
+  });
+
+  const mapped = await Promise.all((response.organic_results ?? []).map((item) => mapSearchResultToSummary(item)));
+  const normalizedIpc = params.ipc?.toLowerCase();
+  const items = normalizedIpc
+    ? mapped.filter((item) => item.ipcClasses.some((ipc) => ipc.toLowerCase().startsWith(normalizedIpc)))
+    : mapped;
+
+  const notices: string[] = [];
+  if (params.ipc) {
+    notices.push("IPC 필터는 SerpAPI 검색 결과와 상세 분류 정보를 함께 사용해 적용했습니다.");
+  }
+  if (!hasPapagoCredentials()) {
+    notices.push("Papago 키가 없어 번역은 원문 기준으로 표시합니다.");
+  }
 
   return {
     items,
-    totalResults: Number(totalRaw) || items.length,
+    totalResults: normalizedIpc ? items.length : response.search_information?.total_results ?? items.length,
     page,
     pageSize,
-    elapsedMs: Date.now() - startedAt,
-    source: "epo",
+    elapsedMs:
+      Math.round((response.search_metadata?.total_time_taken ?? (Date.now() - startedAt) / 1000) * 1000),
+    source: "serpapi",
+    notice: notices.length > 0 ? notices.join(" ") : undefined,
   };
 }
 
-function buildPublicationPath(id: string) {
-  const normalized = cleanPatentNumber(id).replace(/^JP/, "");
-  const kindMatch = normalized.match(/([A-Z]\d?)$/);
-  const kind = kindMatch?.[1] ?? "A";
-  const number = normalized.replace(/[A-Z]\d?$/, "");
-  return `JP.${number}.${kind}`;
-}
-
-async function fetchEpoDetail(id: string): Promise<PatentDetailResponse> {
-  const token = await getEpoAccessToken();
-  const publicationPath = buildPublicationPath(id);
-  const [biblioResponse, abstractResponse] = await Promise.all([
-    fetch(`${EPO_PUBLICATION_BASE}/${publicationPath}/biblio`, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: "application/xml",
-      },
-      cache: "no-store",
-    }),
-    fetch(`${EPO_PUBLICATION_BASE}/${publicationPath}/abstract`, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: "application/xml",
-      },
-      cache: "no-store",
-    }),
-  ]);
-
-  if (!biblioResponse.ok || !abstractResponse.ok) {
-    throw new Error(`EPO detail request failed: ${biblioResponse.status}/${abstractResponse.status}`);
-  }
-
-  const [biblioXml, abstractXml] = await Promise.all([biblioResponse.text(), abstractResponse.text()]);
-
-  const titleJa = parseTagValues(biblioXml, "invention-title")[0] ?? "제목 없음";
-  const abstractJa =
-    parseTagValues(abstractXml, "p").join(" ") || parseTagValue(abstractXml, "abstract") || "요약 정보 없음";
-
+async function fetchSerpApiDetail(id: string): Promise<PatentDetailResponse> {
+  const detail = await fetchSerpApiDetailByPatentId(normalizePatentId(id));
+  const publicationNumber = cleanPatentNumber(detail.publication_number ?? getPublicationNumber(detail.patent_id) ?? id);
+  const titleJa = compactText(decodeHtmlEntities(detail.title ?? "제목 없음"));
+  const abstractJa = compactText(decodeHtmlEntities(detail.abstract_original ?? detail.abstract ?? "요약 정보 없음"));
   const [titleKo, abstractKo] = await Promise.all([translateText(titleJa), translateText(abstractJa)]);
+  const assignees = extractNames(detail.assignees);
+  const inventors = extractNames(detail.inventors);
+  const notices: string[] = [];
 
-  const publicationNumber = parsePublicationNumber(biblioXml) || cleanPatentNumber(id);
-  const inventors = parseTagValues(biblioXml, "inventor-name");
-  const ipcClasses = parseTagValues(biblioXml, "classification-ipcr").slice(0, 5);
+  if (!hasPapagoCredentials()) {
+    notices.push("Papago 키가 없어 번역은 원문 기준으로 표시합니다.");
+  }
 
   return {
     item: {
       id: publicationNumber,
       publicationNumber,
-      applicationNumber: parseTagValue(biblioXml, "doc-number") ?? publicationNumber,
+      applicationNumber: cleanPatentNumber(detail.application_number ?? publicationNumber),
       titleJa,
       titleKo,
       applicant:
-        parseTagValues(biblioXml, "applicant-name")[0] ??
-        parseTagValues(biblioXml, "name")[0] ??
-        "출원인 정보 없음",
-      applicationDate: parseDateFromReference(biblioXml, "application-reference"),
-      publicationDate: parseDateFromReference(biblioXml, "publication-reference"),
-      ipcClasses,
+        compactText(
+          decodeHtmlEntities(detail.assignee ?? assignees[0] ?? "출원인 정보 없음"),
+        ) || "출원인 정보 없음",
+      applicationDate: normalizeDate(detail.filing_date),
+      publicationDate: normalizeDate(detail.publication_date),
+      ipcClasses: extractClassificationCodes(detail.classifications).slice(0, 5),
       country: "JP",
       inventors: inventors.length > 0 ? inventors : ["발명자 정보 없음"],
       abstractJa,
       abstractKo,
       jPlatPatUrl: "https://www.j-platpat.inpit.go.jp/",
-      espacenetUrl: `https://worldwide.espacenet.com/patent/search/family/${publicationNumber}`,
+      espacenetUrl: detail.patent_link ?? buildGooglePatentsUrl(publicationNumber),
     },
-    source: "epo",
+    source: "serpapi",
+    notice: notices.length > 0 ? notices.join(" ") : undefined,
   };
 }
 
 export async function searchPatents(input: SearchParams): Promise<SearchResponse> {
   const params = normalizeSearchParams(input);
 
-  if (!hasEpoCredentials()) {
+  if (!hasSerpApiCredentials()) {
     return searchMockPatents(params);
   }
 
   try {
-    return await fetchEpoSearch(params);
+    return await fetchSerpApiSearch(params);
   } catch (error) {
+    console.error("[SerpAPI] search failed", {
+      params,
+      message: error instanceof Error ? error.message : String(error),
+    });
     const fallback = await searchMockPatents(params);
     return {
       ...fallback,
-      notice: `실시간 EPO 검색에 실패하여 샘플 결과로 대체했습니다. ${
+      notice: `실시간 SerpAPI 검색에 실패하여 샘플 결과로 대체했습니다. ${
         error instanceof Error ? error.message : ""
       }`.trim(),
     };
@@ -416,17 +490,21 @@ export async function searchPatents(input: SearchParams): Promise<SearchResponse
 }
 
 export async function getPatentDetail(id: string): Promise<PatentDetailResponse> {
-  if (!hasEpoCredentials()) {
+  if (!hasSerpApiCredentials()) {
     return getMockPatentDetail(id);
   }
 
   try {
-    return await fetchEpoDetail(id);
+    return await fetchSerpApiDetail(id);
   } catch (error) {
+    console.error("[SerpAPI] detail failed", {
+      id,
+      message: error instanceof Error ? error.message : String(error),
+    });
     const fallback = await getMockPatentDetail(id);
     return {
       ...fallback,
-      notice: `실시간 EPO 상세 조회에 실패하여 샘플 데이터로 대체했습니다. ${
+      notice: `실시간 SerpAPI 상세 조회에 실패하여 샘플 데이터로 대체했습니다. ${
         error instanceof Error ? error.message : ""
       }`.trim(),
     };

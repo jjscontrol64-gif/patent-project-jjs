@@ -7,12 +7,16 @@ planStatus:
   priority: high
   owner: Director
   stakeholders: []
-  tags: ["patent", "api-integration", "nextjs", "epo-ops", "papago"]
+  tags:
+    - patent
+    - api-integration
+    - nextjs
+    - epo-ops
+    - papago
   created: "2026-05-03"
   updated: "2026-05-03T10:00:00.000Z"
   progress: 10
 ---
-
 # 일본 특허 검색 서비스
 
 ## 1. 프로젝트 개요
@@ -26,7 +30,7 @@ EPO Open Patent Services(OPS) API를 통해 일본 특허를 검색하고, Papag
 ## 2. 목표
 
 | 목표 | 상세 |
-|------|------|
+| --- | --- |
 | **핵심 기능** | 일본 특허 키워드 검색 → 결과를 한국어로 번역하여 표시 |
 | **UX** | 비전문가도 직관적으로 쓸 수 있는 단순한 인터페이스 |
 | **확장성** | 개인용 → 공개 서비스 전환 시 인증/과금 레이어를 자연스럽게 추가 가능 |
@@ -39,7 +43,7 @@ EPO Open Patent Services(OPS) API를 통해 일본 특허를 검색하고, Papag
 ### 3-1. 검색
 
 | 기능 | 설명 |
-|------|------|
+| --- | --- |
 | 키워드 검색 | 제목·요약에서 키워드로 검색 |
 | 특허번호 검색 | JP 특허번호로 직접 조회 |
 | 날짜 범위 필터 | 출원일/공개일 기준 기간 필터 |
@@ -48,7 +52,7 @@ EPO Open Patent Services(OPS) API를 통해 일본 특허를 검색하고, Papag
 ### 3-2. 검색 결과
 
 | 기능 | 설명 |
-|------|------|
+| --- | --- |
 | 목록 표시 | 특허번호, 제목(한국어), 출원인, 출원일 |
 | 페이지네이션 | 페이지당 10~20건, 다음 페이지 이동 |
 | 번역 토글 | 원문(일본어) ↔ 번역(한국어) 전환 |
@@ -56,7 +60,7 @@ EPO Open Patent Services(OPS) API를 통해 일본 특허를 검색하고, Papag
 ### 3-3. 상세 조회
 
 | 기능 | 설명 |
-|------|------|
+| --- | --- |
 | 서지 정보 | 특허번호, 출원인, 발명자, 출원일, 공개일, IPC |
 | 제목 번역 | 일본어 원문 + 한국어 번역 |
 | 요약 번역 | 일본어 원문 + 한국어 번역 |
@@ -67,7 +71,7 @@ EPO Open Patent Services(OPS) API를 통해 일본 특허를 검색하고, Papag
 ## 4. 기술 스택
 
 | 레이어 | 기술 | 이유 |
-|--------|------|------|
+| --- | --- | --- |
 | 프레임워크 | Next.js 14+ (App Router) | SSR + API Routes 통합, 추후 배포 용이 |
 | 언어 | TypeScript | 타입 안전성, 유지보수성 |
 | 스타일 | Tailwind CSS | 빠른 UI 구현 |
@@ -108,7 +112,7 @@ EPO OPS와 Papago 모두 API 키를 서버 사이드에서만 사용해야 한�
 ### 주요 엔드포인트
 
 | 기능 | EPO OPS 엔드포인트 |
-|------|--------------------|
+| --- | --- |
 | 특허 검색 | `GET /3.2/rest-services/published-data/search` |
 | 서지 정보 | `GET /3.2/rest-services/published-data/publication/docdb/{doc-id}/biblio` |
 | 요약 | `GET /3.2/rest-services/published-data/publication/docdb/{doc-id}/abstract` |
@@ -186,7 +190,7 @@ Body:
 ## 9. UI 목업
 
 | 화면 | 파일 |
-|------|------|
+| --- | --- |
 | 전체 (탭 탐색) | `nimbalyst-local/mockups/japan-patent-search.mockup.html` |
 | ① 메인 검색 페이지 | `nimbalyst-local/mockups/japan-patent-search.mockup.html` (탭 ①) |
 | ② 검색 결과 목록 | `nimbalyst-local/mockups/screen2-search-results.mockup.html` |
@@ -197,7 +201,7 @@ Body:
 ## 10. 페이지 구성 (라우팅)
 
 | 경로 | 설명 |
-|------|------|
+| --- | --- |
 | `/` | 메인 검색 페이지 |
 | `/search?q=...` | 검색 결과 목록 |
 | `/patent/[id]` | 특허 상세 페이지 |
@@ -244,7 +248,7 @@ NAVER_CLIENT_SECRET=
 ## 12. 결정 사항 ✅
 
 | # | 이슈 | 결정 |
-|---|------|------|
+| --- | --- | --- |
 | 1 | 번역 범위 | **제목 + 요약** |
 | 2 | 검색 범위 | **일본 특허(JP)만** |
 | 3 | UI 스타일 | **심플 검색창 (구글 스타일)** |

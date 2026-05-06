@@ -29,12 +29,14 @@ export function SearchResultsClient({ response, searchParams }: SearchResultsCli
     return Array.from(pages).sort((a, b) => a - b);
   }, [response.page, totalPages]);
 
+  const sourceLabel = response.source === "serpapi" ? "실시간 SerpAPI" : "샘플 데이터";
+
   return (
     <div className="min-h-screen bg-transparent pb-16">
       <header className="border-b border-brand-line bg-white/90 backdrop-blur">
         <div className="mx-auto flex max-w-6xl flex-col gap-4 px-4 py-4 md:flex-row md:items-center">
           <Link href="/" className="text-2xl font-bold tracking-tight text-brand-ink">
-            <span className="text-brand-blue">JP</span>특허검색
+            <span className="text-brand-blue">JP</span> 특허검색
           </Link>
           <PatentSearchForm variant="compact" initialValues={searchParams} />
         </div>
@@ -49,8 +51,7 @@ export function SearchResultsClient({ response, searchParams }: SearchResultsCli
 
         <div className="mb-5 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div className="text-sm text-brand-muted">
-            약 {response.totalResults.toLocaleString("ko-KR")}건 · {(response.elapsedMs / 1000).toFixed(2)}초 ·{" "}
-            {response.source === "epo" ? "실시간 EPO" : "샘플 데이터"}
+            총 {response.totalResults.toLocaleString("ko-KR")}건, {(response.elapsedMs / 1000).toFixed(2)}초, {sourceLabel}
           </div>
           <button
             type="button"
@@ -86,7 +87,7 @@ export function SearchResultsClient({ response, searchParams }: SearchResultsCli
           {response.items.length === 0 ? (
             <div className="rounded-3xl border border-brand-line bg-white/85 p-10 text-center shadow-card">
               <p className="text-lg font-semibold text-brand-ink">검색 결과가 없습니다.</p>
-              <p className="mt-2 text-sm text-brand-muted">검색어를 바꾸거나 날짜, IPC 필터를 완화해 보세요.</p>
+              <p className="mt-2 text-sm text-brand-muted">검색어 또는 날짜, IPC 조건을 조정해 보세요.</p>
             </div>
           ) : (
             <div className="space-y-2 rounded-[2rem] border border-white/70 bg-white/85 px-6 py-4 shadow-card backdrop-blur">
@@ -114,7 +115,7 @@ export function SearchResultsClient({ response, searchParams }: SearchResultsCli
                     </span>
                     <span>
                       <span className="mr-1 text-slate-400">출원일</span>
-                      {item.applicationDate}
+                      {item.applicationDate || "-"}
                     </span>
                     <span>
                       <span className="mr-1 text-slate-400">IPC</span>
@@ -133,7 +134,7 @@ export function SearchResultsClient({ response, searchParams }: SearchResultsCli
               href={createSearchHref({ ...searchParams, page: Math.max(1, response.page - 1) })}
               className="flex h-10 w-10 items-center justify-center rounded-full text-brand-blue hover:bg-white"
             >
-              ‹
+              ←
             </Link>
             {pageNumbers.map((pageNumber, index) => {
               const previous = pageNumbers[index - 1];
@@ -158,7 +159,7 @@ export function SearchResultsClient({ response, searchParams }: SearchResultsCli
               href={createSearchHref({ ...searchParams, page: Math.min(totalPages, response.page + 1) })}
               className="flex h-10 w-10 items-center justify-center rounded-full text-brand-blue hover:bg-white"
             >
-              ›
+              →
             </Link>
           </nav>
         ) : null}

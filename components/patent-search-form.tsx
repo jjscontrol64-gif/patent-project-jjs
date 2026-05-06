@@ -15,7 +15,7 @@ type PatentSearchFormProps = {
 export function PatentSearchForm({
   variant = "hero",
   initialValues,
-  placeholder = "키워드, 특허번호, 출원인으로 검색...",
+  placeholder = "키워드, 특허번호, 출원인으로 검색",
 }: PatentSearchFormProps) {
   const router = useRouter();
   const [q, setQ] = useState(initialValues?.q ?? initialValues?.patentNumber ?? "");
@@ -44,7 +44,7 @@ export function PatentSearchForm({
       dateTo: dateTo.trim() || undefined,
       ipc: ipc.trim() || undefined,
       page: 1,
-      pageSize: initialValues?.pageSize ?? 5,
+      pageSize: initialValues?.pageSize ?? 10,
     }),
     [dateFrom, dateTo, initialValues?.pageSize, ipc, q],
   );
@@ -126,7 +126,7 @@ export function PatentSearchForm({
               <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                 <path d="M3 17v2h6v-2zm0-12v2h10V5zm10 16v-2h8v-2h-8v-2h-2v6zm-6-6H3v2h4v2h2zm14-4V9H11v2zm-6-4h2V5h4V3h-4V1h-2z" />
               </svg>
-              고급 필터 (날짜 · IPC)
+              고급 필터 (날짜 / IPC)
             </button>
           </div>
           {showFilters ? (

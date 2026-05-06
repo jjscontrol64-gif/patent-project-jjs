@@ -1,7 +1,7 @@
 import { SearchParams } from "@/lib/types";
 
 export function cleanPatentNumber(input: string): string {
-  return input.replace(/\s+/g, "").toUpperCase();
+  return input.replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
 }
 
 export function isPatentNumberLike(input: string): boolean {
@@ -23,7 +23,7 @@ export function createSearchHref(params: SearchParams): string {
   if (params.dateTo) search.set("dateTo", params.dateTo);
   if (params.ipc) search.set("ipc", params.ipc);
   if (params.page && params.page > 1) search.set("page", String(params.page));
-  if (params.pageSize && params.pageSize !== 5) search.set("pageSize", String(params.pageSize));
+  if (params.pageSize && params.pageSize !== 10) search.set("pageSize", String(params.pageSize));
   return `/search?${search.toString()}`;
 }
 
@@ -67,7 +67,7 @@ export function normalizeSearchParams(
   };
 
   const page = Number(getValue("page") ?? "1");
-  const pageSize = Number(getValue("pageSize") ?? "5");
+  const pageSize = Number(getValue("pageSize") ?? "10");
 
   return {
     q: getValue("q")?.trim() || undefined,
@@ -76,6 +76,6 @@ export function normalizeSearchParams(
     dateTo: getValue("dateTo")?.trim() || undefined,
     ipc: getValue("ipc")?.trim() || undefined,
     page: Number.isFinite(page) && page > 0 ? page : 1,
-    pageSize: Number.isFinite(pageSize) && pageSize > 0 && pageSize <= 20 ? pageSize : 5,
+    pageSize: Number.isFinite(pageSize) && pageSize >= 10 && pageSize <= 20 ? pageSize : 10,
   };
 }

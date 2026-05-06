@@ -2,7 +2,19 @@
   "permissions": {
     "allow": [
       "Bash(git ls-tree *)",
-      "Bash(git config *)"
+      "Bash(git config *)",
+      "Bash(ls:*)",
+      "Bash(echo:*)",
+      "Bash(cat:*)",
+      "Bash(head:*)",
+      "Bash(mkdir:*)",
+      "Bash(type:*)",
+      "Bash(cp:*)",
+      "Bash(python3:*)",
+      "Bash(python:*)",
+      "Bash(cd:*)",
+      "Bash(set:*)",
+      "Bash(start:*)"
     ]
   }
 }
