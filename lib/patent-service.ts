@@ -3,7 +3,8 @@ import { PatentDetail, PatentDetailResponse, PatentSummary, SearchParams, Search
 import { cleanPatentNumber, compactText, decodeHtmlEntities, isPatentNumberLike, normalizeSearchParams } from "@/lib/utils";
 
 const SERPAPI_URL = "https://serpapi.com/search.json";
-const PAPAGO_URL = "https://openapi.naver.com/v1/papago/n2mt";
+const DEEPL_FREE_TRANSLATE_URL = "https://api-free.deepl.com/v2/translate";
+const DEEPL_PRO_TRANSLATE_URL = "https://api.deepl.com/v2/translate";
 
 const MOCK_LATENCY_MS = 140;
 const SERPAPI_MIN_PAGE_SIZE = 10;
@@ -55,8 +56,24 @@ function hasSerpApiCredentials() {
   return Boolean(process.env.SERPAPI_API_KEY);
 }
 
-function hasPapagoCredentials() {
-  return Boolean(process.env.NAVER_CLIENT_ID && process.env.NAVER_CLIENT_SECRET);
+type DeepLTranslateResponse = {
+  translations?: Array<{
+    detected_source_language?: string;
+    text?: string;
+  }>;
+  message?: string;
+};
+
+function hasDeepLCredentials() {
+  return Boolean(process.env.DEEPL_API_KEY);
+}
+
+function getDeepLTranslateUrl() {
+  if (process.env.DEEPL_API_URL?.trim()) {
+    return process.env.DEEPL_API_URL.trim();
+  }
+
+  return process.env.DEEPL_API_KEY?.endsWith(":fx") ? DEEPL_FREE_TRANSLATE_URL : DEEPL_PRO_TRANSLATE_URL;
 }
 
 function toSummary(detail: PatentDetail): PatentSummary {
@@ -151,35 +168,60 @@ async function getMockPatentDetail(id: string): Promise<PatentDetailResponse> {
 }
 
 async function translateText(text: string): Promise<string> {
-  if (!text) return text;
-  if (!hasPapagoCredentials()) return text;
+  const [translatedText] = await translateTexts([text]);
+  return translatedText;
+}
 
-  const body = new URLSearchParams({
-    source: "ja",
-    target: "ko",
-    text,
-  });
+async function translateTexts(texts: string[]): Promise<string[]> {
+  if (texts.length === 0) return [];
+  if (!hasDeepLCredentials()) return texts;
 
-  const response = await fetch(PAPAGO_URL, {
+  const indexedTexts = texts
+    .map((text, index) => ({ text, index }))
+    .filter((item) => Boolean(item.text));
+
+  if (indexedTexts.length === 0) {
+    return texts;
+  }
+
+  const response = await fetch(getDeepLTranslateUrl(), {
     method: "POST",
     headers: {
-      "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
-      "X-Naver-Client-Id": process.env.NAVER_CLIENT_ID as string,
-      "X-Naver-Client-Secret": process.env.NAVER_CLIENT_SECRET as string,
+      Authorization: `DeepL-Auth-Key ${process.env.DEEPL_API_KEY as string}`,
+      "Content-Type": "application/json",
     },
-    body,
+    body: JSON.stringify({
+      text: indexedTexts.map((item) => item.text),
+      source_lang: "JA",
+      target_lang: "KO",
+    }),
     cache: "no-store",
   });
 
   if (!response.ok) {
-    throw new Error(`Papago translation failed: ${response.status}`);
+    let message = `DeepL translation failed: ${response.status}`;
+
+    try {
+      const errorPayload = (await response.json()) as { message?: string; detail?: string };
+      if (errorPayload.message || errorPayload.detail) {
+        message = `DeepL translation failed: ${errorPayload.message ?? errorPayload.detail}`;
+      }
+    } catch {
+      // Ignore non-JSON error payloads and keep the status-based message.
+    }
+
+    throw new Error(message);
   }
 
-  const payload = (await response.json()) as {
-    message?: { result?: { translatedText?: string } };
-  };
+  const payload = (await response.json()) as DeepLTranslateResponse;
+  const translatedTexts = payload.translations?.map((item) => item.text ?? "") ?? [];
+  const results = [...texts];
 
-  return payload.message?.result?.translatedText ?? text;
+  indexedTexts.forEach((item, index) => {
+    results[item.index] = translatedTexts[index] ?? item.text;
+  });
+
+  return results;
 }
 
 async function fetchSerpApi<T extends { error?: string }>(params: Record<string, string | number | undefined>): Promise<T> {
@@ -409,8 +451,8 @@ async function fetchSerpApiSearch(params: SearchParams): Promise<SearchResponse>
   if (params.ipc) {
     notices.push("IPC 필터는 SerpAPI 검색 결과와 상세 분류 정보를 함께 사용해 적용했습니다.");
   }
-  if (!hasPapagoCredentials()) {
-    notices.push("Papago 키가 없어 번역은 원문 기준으로 표시합니다.");
+  if (!hasDeepLCredentials()) {
+    notices.push("DeepL API 키가 없어 번역은 원문 기준으로 표시합니다.");
   }
 
   return {
@@ -430,13 +472,13 @@ async function fetchSerpApiDetail(id: string): Promise<PatentDetailResponse> {
   const publicationNumber = cleanPatentNumber(detail.publication_number ?? getPublicationNumber(detail.patent_id) ?? id);
   const titleJa = compactText(decodeHtmlEntities(detail.title ?? "제목 없음"));
   const abstractJa = compactText(decodeHtmlEntities(detail.abstract_original ?? detail.abstract ?? "요약 정보 없음"));
-  const [titleKo, abstractKo] = await Promise.all([translateText(titleJa), translateText(abstractJa)]);
+  const [titleKo, abstractKo] = await translateTexts([titleJa, abstractJa]);
   const assignees = extractNames(detail.assignees);
   const inventors = extractNames(detail.inventors);
   const notices: string[] = [];
 
-  if (!hasPapagoCredentials()) {
-    notices.push("Papago 키가 없어 번역은 원문 기준으로 표시합니다.");
+  if (!hasDeepLCredentials()) {
+    notices.push("DeepL API 키가 없어 번역은 원문 기준으로 표시합니다.");
   }
 
   return {
