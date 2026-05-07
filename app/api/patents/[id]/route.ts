@@ -5,14 +5,15 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 type RouteContext = {
-  params: {
+  params: Promise<{
     id: string;
-  };
+  }>;
 };
 
 export async function GET(_: Request, { params }: RouteContext) {
   try {
-    const response = await getPatentDetail(params.id);
+    const { id } = await params;
+    const response = await getPatentDetail(id);
     return NextResponse.json(response);
   } catch (error) {
     return NextResponse.json(

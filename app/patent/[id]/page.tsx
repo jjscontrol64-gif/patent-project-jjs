@@ -6,13 +6,14 @@ import { buildDetailBackHref, normalizeSearchParams } from "@/lib/utils";
 export const dynamic = "force-dynamic";
 
 type PatentDetailPageProps = {
-  params: { id: string };
-  searchParams: Record<string, string | string[] | undefined>;
+  params: Promise<{ id: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 };
 
 export default async function PatentDetailPage({ params, searchParams }: PatentDetailPageProps) {
-  const detailResponse = await getPatentDetail(params.id);
-  const normalized = normalizeSearchParams(searchParams);
+  const [{ id }, rawSearchParams] = await Promise.all([params, searchParams]);
+  const detailResponse = await getPatentDetail(id);
+  const normalized = normalizeSearchParams(rawSearchParams);
   const backHref = buildDetailBackHref(normalized);
 
   return (

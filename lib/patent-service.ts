@@ -64,8 +64,17 @@ type DeepLTranslateResponse = {
   message?: string;
 };
 
+type DeepLTranslateOptions = {
+  sourceLang?: "JA" | "KO";
+  targetLang?: "JA" | "KO";
+};
+
 function hasDeepLCredentials() {
   return Boolean(process.env.DEEPL_API_KEY);
+}
+
+function toErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function getDeepLTranslateUrl() {
@@ -172,9 +181,12 @@ async function translateText(text: string): Promise<string> {
   return translatedText;
 }
 
-async function translateTexts(texts: string[]): Promise<string[]> {
+async function translateTexts(texts: string[], options: DeepLTranslateOptions = {}): Promise<string[]> {
   if (texts.length === 0) return [];
   if (!hasDeepLCredentials()) return texts;
+
+  const sourceLang = options.sourceLang ?? "JA";
+  const targetLang = options.targetLang ?? "KO";
 
   const indexedTexts = texts
     .map((text, index) => ({ text, index }))
@@ -192,8 +204,8 @@ async function translateTexts(texts: string[]): Promise<string[]> {
     },
     body: JSON.stringify({
       text: indexedTexts.map((item) => item.text),
-      source_lang: "JA",
-      target_lang: "KO",
+      source_lang: sourceLang,
+      target_lang: targetLang,
     }),
     cache: "no-store",
   });
@@ -224,6 +236,40 @@ async function translateTexts(texts: string[]): Promise<string[]> {
   return results;
 }
 
+async function translateTextSafely(text: string): Promise<string> {
+  try {
+    return await translateText(text);
+  } catch (error) {
+    console.warn("[DeepL] translation failed", {
+      length: text.length,
+      message: toErrorMessage(error),
+    });
+    return text;
+  }
+}
+
+async function translateTextsSafely(texts: string[]): Promise<{ texts: string[]; notice?: string }> {
+  try {
+    return { texts: await translateTexts(texts) };
+  } catch (error) {
+    const message = toErrorMessage(error);
+
+    console.warn("[DeepL] translation failed", {
+      count: texts.length,
+      message,
+    });
+
+    return {
+      texts,
+      notice: `DeepL 번역에 실패해 원문으로 표시합니다. ${message}`.trim(),
+    };
+  }
+}
+
+function containsHangul(value: string): boolean {
+  return /[가-힣]/.test(value);
+}
+
 async function fetchSerpApi<T extends { error?: string }>(params: Record<string, string | number | undefined>): Promise<T> {
   const query = new URLSearchParams();
 
@@ -239,7 +285,27 @@ async function fetchSerpApi<T extends { error?: string }>(params: Record<string,
   });
 
   if (!response.ok) {
-    throw new Error(`SerpAPI request failed: ${response.status}`);
+    let message = `SerpAPI request failed: ${response.status}`;
+
+    try {
+      const responseText = await response.text();
+      let detail = responseText;
+
+      try {
+        const parsed = JSON.parse(responseText) as { error?: string; message?: string };
+        detail = parsed.error ?? parsed.message ?? responseText;
+      } catch {
+        // Keep the raw response text when the error payload is not JSON.
+      }
+
+      if (detail) {
+        message = `SerpAPI request failed: ${response.status} - ${detail}`;
+      }
+    } catch {
+      // Ignore response body read failures and keep the status-based message.
+    }
+
+    throw new Error(message);
   }
 
   const payload = (await response.json()) as T;
@@ -253,6 +319,17 @@ async function fetchSerpApi<T extends { error?: string }>(params: Record<string,
 function normalizeDate(value?: string): string {
   if (!value) return "";
   return /^\d{8}$/.test(value) ? `${value.slice(0, 4)}-${value.slice(4, 6)}-${value.slice(6, 8)}` : value;
+}
+
+function toSerpApiDateFilter(value?: string, type: "filing" | "publication" | "priority" = "filing"): string | undefined {
+  if (!value) return undefined;
+
+  const normalized = value.replaceAll("-", "");
+  if (!/^\d{8}$/.test(normalized)) {
+    return undefined;
+  }
+
+  return `${type}:${normalized}`;
 }
 
 function normalizePatentId(id: string): string {
@@ -287,12 +364,42 @@ function buildGooglePatentsUrl(publicationNumber: string): string {
   return `https://patents.google.com/patent/${cleanPatentNumber(publicationNumber)}`;
 }
 
-function buildSearchQuery(params: SearchParams): string {
-  const queryParts = [params.q?.trim(), params.patentNumber ? cleanPatentNumber(params.patentNumber) : undefined, params.ipc?.trim()]
+async function buildSearchQuery(params: SearchParams): Promise<{ query: string; notice?: string }> {
+  const notices: string[] = [];
+  let keyword = params.q?.trim();
+
+  if (keyword && containsHangul(keyword)) {
+    if (!hasDeepLCredentials()) {
+      notices.push("DeepL API 키가 없어 한국어 검색어를 일본어로 변환하지 못해 원문으로 검색했습니다.");
+    } else {
+      try {
+        const [translatedKeyword] = await translateTexts([keyword], {
+          sourceLang: "KO",
+          targetLang: "JA",
+        });
+
+        if (translatedKeyword.trim()) {
+          keyword = translatedKeyword.trim();
+          notices.push("한국어 검색어를 일본어로 변환해 검색했습니다.");
+        }
+      } catch (error) {
+        console.warn("[DeepL] search query translation failed", {
+          length: keyword.length,
+          message: toErrorMessage(error),
+        });
+        notices.push(`한국어 검색어 번역에 실패해 원문으로 검색했습니다. ${toErrorMessage(error)}`.trim());
+      }
+    }
+  }
+
+  const queryParts = [keyword, params.patentNumber ? cleanPatentNumber(params.patentNumber) : undefined, params.ipc?.trim()]
     .filter(Boolean)
     .map((value) => value!.replaceAll('"', " "));
 
-  return queryParts.length > 0 ? queryParts.join(" ") : "JP";
+  return {
+    query: queryParts.length > 0 ? queryParts.join(" ") : "JP",
+    notice: notices.length > 0 ? notices.join(" ") : undefined,
+  };
 }
 
 function getPatentNumberCandidate(params: SearchParams): string | undefined {
@@ -353,7 +460,7 @@ async function tryDirectPatentNumberSearch(params: SearchParams): Promise<Search
       notice: notices.join(" "),
     };
   } catch (error) {
-    console.error("[SerpAPI] direct patent lookup failed", {
+    console.warn("[SerpAPI] direct patent lookup failed", {
       candidate,
       message: error instanceof Error ? error.message : String(error),
     });
@@ -379,7 +486,7 @@ async function mapSearchResultToSummary(item: SerpApiOrganicResult): Promise<Pat
       detail.publication_number ?? item.publication_number ?? getPublicationNumber(detail.patent_id) ?? fallbackPublicationNumber,
     );
     const titleJa = compactText(decodeHtmlEntities(detail.title ?? item.title ?? "제목 없음"));
-    const titleKo = await translateText(titleJa);
+    const titleKo = await translateTextSafely(titleJa);
 
     return {
       id: publicationNumber,
@@ -403,7 +510,7 @@ async function mapSearchResultToSummary(item: SerpApiOrganicResult): Promise<Pat
     };
   } catch {
     const titleJa = compactText(decodeHtmlEntities(item.title ?? "제목 없음"));
-    const titleKo = await translateText(titleJa);
+    const titleKo = await translateTextSafely(titleJa);
 
     return {
       id: fallbackPublicationNumber,
@@ -429,16 +536,17 @@ async function fetchSerpApiSearch(params: SearchParams): Promise<SearchResponse>
   const page = params.page ?? 1;
   const pageSize = Math.max(params.pageSize ?? SERPAPI_MIN_PAGE_SIZE, SERPAPI_MIN_PAGE_SIZE);
   const startedAt = Date.now();
+  const searchQuery = await buildSearchQuery(params);
 
   const response = await fetchSerpApi<SerpApiSearchResponse>({
     engine: "google_patents",
-    q: buildSearchQuery(params),
+    q: searchQuery.query,
     page,
     num: pageSize,
     language: "JAPANESE",
     country: "JP",
-    after: params.dateFrom,
-    before: params.dateTo,
+    after: toSerpApiDateFilter(params.dateFrom, "filing"),
+    before: toSerpApiDateFilter(params.dateTo, "filing"),
   });
 
   const mapped = await Promise.all((response.organic_results ?? []).map((item) => mapSearchResultToSummary(item)));
@@ -448,6 +556,9 @@ async function fetchSerpApiSearch(params: SearchParams): Promise<SearchResponse>
     : mapped;
 
   const notices: string[] = [];
+  if (searchQuery.notice) {
+    notices.push(searchQuery.notice);
+  }
   if (params.ipc) {
     notices.push("IPC 필터는 SerpAPI 검색 결과와 상세 분류 정보를 함께 사용해 적용했습니다.");
   }
@@ -472,13 +583,17 @@ async function fetchSerpApiDetail(id: string): Promise<PatentDetailResponse> {
   const publicationNumber = cleanPatentNumber(detail.publication_number ?? getPublicationNumber(detail.patent_id) ?? id);
   const titleJa = compactText(decodeHtmlEntities(detail.title ?? "제목 없음"));
   const abstractJa = compactText(decodeHtmlEntities(detail.abstract_original ?? detail.abstract ?? "요약 정보 없음"));
-  const [titleKo, abstractKo] = await translateTexts([titleJa, abstractJa]);
+  const translation = await translateTextsSafely([titleJa, abstractJa]);
+  const [titleKo, abstractKo] = translation.texts;
   const assignees = extractNames(detail.assignees);
   const inventors = extractNames(detail.inventors);
   const notices: string[] = [];
 
   if (!hasDeepLCredentials()) {
     notices.push("DeepL API 키가 없어 번역은 원문 기준으로 표시합니다.");
+  }
+  if (translation.notice) {
+    notices.push(translation.notice);
   }
 
   return {
@@ -517,7 +632,7 @@ export async function searchPatents(input: SearchParams): Promise<SearchResponse
   try {
     return await fetchSerpApiSearch(params);
   } catch (error) {
-    console.error("[SerpAPI] search failed", {
+    console.warn("[SerpAPI] search failed", {
       params,
       message: error instanceof Error ? error.message : String(error),
     });
@@ -554,9 +669,5 @@ export async function getPatentDetail(id: string): Promise<PatentDetailResponse>
 }
 
 export async function translateTextToKorean(text: string) {
-  try {
-    return await translateText(text);
-  } catch {
-    return text;
-  }
+  return translateTextSafely(text);
 }
