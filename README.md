@@ -12,7 +12,8 @@
 - 검색 API: `/api/patents/search`
 - 상세 API: `/api/patents/[id]`
 - 번역 API: `/api/translate`
-
+## 배포
+Vercel에 배포 ( https://patent-project-jjs.vercel.app/ )
 ## 기술 스택
 
 - Next.js 16
