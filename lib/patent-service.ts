@@ -44,6 +44,8 @@ type SerpApiDetailsResponse = {
   publication_date?: string;
   abstract?: string;
   abstract_original?: string;
+  description_link?: string;
+  claims?: string[];
   classifications?: Array<string | { code?: string }>;
   patent_link?: string;
   search_metadata?: {
@@ -364,6 +366,56 @@ function buildGooglePatentsUrl(publicationNumber: string): string {
   return `https://patents.google.com/patent/${cleanPatentNumber(publicationNumber)}`;
 }
 
+function compactMaybeText(value?: string): string {
+  if (!value) return "";
+  return compactText(decodeHtmlEntities(value.replace(/<[^>]+>/g, " ")));
+}
+
+async function fetchDescriptionExcerpt(descriptionLink?: string): Promise<string> {
+  if (!descriptionLink) return "";
+
+  try {
+    const response = await fetch(descriptionLink, {
+      cache: "no-store",
+    });
+
+    if (!response.ok) {
+      console.warn("[SerpAPI] description fetch failed", {
+        status: response.status,
+      });
+      return "";
+    }
+
+    const html = await response.text();
+    const paragraphs = Array.from(html.matchAll(/<p\b[^>]*>([\s\S]*?)<\/p>/gi))
+      .map((match) => compactMaybeText(match[1]))
+      .filter((text) => text.length >= 60);
+
+    return paragraphs[0] ?? "";
+  } catch (error) {
+    console.warn("[SerpAPI] description fetch failed", {
+      message: toErrorMessage(error),
+    });
+    return "";
+  }
+}
+
+async function resolveAbstract(detail: SerpApiDetailsResponse): Promise<string> {
+  const abstractOriginal = compactMaybeText(detail.abstract_original);
+  if (abstractOriginal) return abstractOriginal;
+
+  const abstract = compactMaybeText(detail.abstract);
+  if (abstract) return abstract;
+
+  const descriptionExcerpt = await fetchDescriptionExcerpt(detail.description_link);
+  if (descriptionExcerpt) return descriptionExcerpt;
+
+  const firstClaim = compactMaybeText(detail.claims?.[0]);
+  if (firstClaim) return firstClaim;
+
+  return "요약 정보 없음";
+}
+
 async function buildSearchQuery(params: SearchParams): Promise<{ query: string; notice?: string }> {
   const notices: string[] = [];
   let keyword = params.q?.trim();
@@ -622,6 +674,48 @@ async function fetchSerpApiDetail(id: string): Promise<PatentDetailResponse> {
   };
 }
 
+async function fetchSerpApiDetailResolved(id: string): Promise<PatentDetailResponse> {
+  const detail = await fetchSerpApiDetailByPatentId(normalizePatentId(id));
+  const publicationNumber = cleanPatentNumber(detail.publication_number ?? getPublicationNumber(detail.patent_id) ?? id);
+  const titleJa = compactMaybeText(detail.title) || "제목 없음";
+  const abstractJa = await resolveAbstract(detail);
+  const translation = await translateTextsSafely([titleJa, abstractJa]);
+  const [titleKo, abstractKo] = translation.texts;
+  const assignees = extractNames(detail.assignees);
+  const inventors = extractNames(detail.inventors);
+  const notices: string[] = [];
+
+  if (!hasDeepLCredentials()) {
+    notices.push("DeepL API 키가 없어 번역은 원문 기준으로 표시합니다.");
+  }
+  if (translation.notice) {
+    notices.push(translation.notice);
+  }
+
+  return {
+    item: {
+      id: publicationNumber,
+      publicationNumber,
+      applicationNumber: cleanPatentNumber(detail.application_number ?? publicationNumber),
+      titleJa,
+      titleKo,
+      applicant:
+        compactMaybeText(detail.assignee ?? assignees[0] ?? "출원인 정보 없음") || "출원인 정보 없음",
+      applicationDate: normalizeDate(detail.filing_date),
+      publicationDate: normalizeDate(detail.publication_date),
+      ipcClasses: extractClassificationCodes(detail.classifications).slice(0, 5),
+      country: "JP",
+      inventors: inventors.length > 0 ? inventors : ["발명자 정보 없음"],
+      abstractJa,
+      abstractKo,
+      jPlatPatUrl: "https://www.j-platpat.inpit.go.jp/",
+      espacenetUrl: detail.patent_link ?? buildGooglePatentsUrl(publicationNumber),
+    },
+    source: "serpapi",
+    notice: notices.length > 0 ? notices.join(" ") : undefined,
+  };
+}
+
 export async function searchPatents(input: SearchParams): Promise<SearchResponse> {
   const params = normalizeSearchParams(input);
 
@@ -652,7 +746,7 @@ export async function getPatentDetail(id: string): Promise<PatentDetailResponse>
   }
 
   try {
-    return await fetchSerpApiDetail(id);
+    return await fetchSerpApiDetailResolved(id);
   } catch (error) {
     console.error("[SerpAPI] detail failed", {
       id,
