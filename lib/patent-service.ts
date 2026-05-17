@@ -3,8 +3,6 @@ import { PatentDetail, PatentDetailResponse, PatentSummary, SearchParams, Search
 import { cleanPatentNumber, compactText, decodeHtmlEntities, normalizeSearchParams } from "@/lib/utils";
 
 const PATENT_API_BASE_URL = process.env.PATENT_API_BASE_URL ?? "http://localhost:8080";
-const DEEPL_FREE_TRANSLATE_URL = "https://api-free.deepl.com/v2/translate";
-const DEEPL_PRO_TRANSLATE_URL = "https://api.deepl.com/v2/translate";
 
 const MOCK_LATENCY_MS = 140;
 const DEFAULT_PAGE_SIZE = 10;
@@ -12,6 +10,10 @@ const DEFAULT_PAGE_SIZE = 10;
 type PatentApiItem = {
   id?: string;
   title?: string;
+  titleJa?: string;
+  titleKo?: string;
+  translatedTitle?: string;
+  titleTranslated?: string;
   applicant?: string;
   filingDate?: string;
   publicationNumber?: string;
@@ -28,40 +30,35 @@ type PatentApiSearchResponse = {
 type PatentApiDetailResponse = {
   id?: string;
   title?: string;
+  titleJa?: string;
+  titleKo?: string;
+  translatedTitle?: string;
+  titleTranslated?: string;
+  abstract?: string;
   abstractText?: string;
+  abstractJa?: string;
+  abstractKo?: string;
+  translatedAbstract?: string;
+  abstractTranslated?: string;
   applicant?: string;
   filingDate?: string;
   publicationNumber?: string;
   originalUrl?: string;
 };
 
-type DeepLTranslateResponse = {
-  translations?: Array<{
-    detected_source_language?: string;
-    text?: string;
-  }>;
-  message?: string;
+type PatentApiTranslateResponse = {
+  source?: string;
+  target?: string;
+  text?: string;
+  translatedText?: string;
 };
-
-type DeepLTranslateOptions = {
-  sourceLang?: "JA" | "KO";
-  targetLang?: "JA" | "KO";
-};
-
-function hasDeepLCredentials() {
-  return Boolean(process.env.DEEPL_API_KEY);
-}
 
 function toErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function getDeepLTranslateUrl() {
-  if (process.env.DEEPL_API_URL?.trim()) {
-    return process.env.DEEPL_API_URL.trim();
-  }
-
-  return process.env.DEEPL_API_KEY?.endsWith(":fx") ? DEEPL_FREE_TRANSLATE_URL : DEEPL_PRO_TRANSLATE_URL;
+function decodeAndCompact(value: string): string {
+  return compactText(decodeHtmlEntities(value));
 }
 
 function toSummary(detail: PatentDetail): PatentSummary {
@@ -155,126 +152,13 @@ async function getMockPatentDetail(id: string): Promise<PatentDetailResponse> {
   };
 }
 
-async function translateText(text: string): Promise<string> {
-  const [translatedText] = await translateTexts([text]);
-  return translatedText;
-}
-
-async function translateTexts(texts: string[], options: DeepLTranslateOptions = {}): Promise<string[]> {
-  if (texts.length === 0) return [];
-  if (!hasDeepLCredentials()) return texts;
-
-  const sourceLang = options.sourceLang ?? "JA";
-  const targetLang = options.targetLang ?? "KO";
-
-  const indexedTexts = texts
-    .map((text, index) => ({ text, index }))
-    .filter((item) => Boolean(item.text));
-
-  if (indexedTexts.length === 0) {
-    return texts;
-  }
-
-  const response = await fetch(getDeepLTranslateUrl(), {
-    method: "POST",
-    headers: {
-      Authorization: `DeepL-Auth-Key ${process.env.DEEPL_API_KEY as string}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      text: indexedTexts.map((item) => item.text),
-      source_lang: sourceLang,
-      target_lang: targetLang,
-    }),
-    cache: "no-store",
-  });
-
-  if (!response.ok) {
-    let message = `DeepL translation failed: ${response.status}`;
-
-    try {
-      const errorPayload = (await response.json()) as { message?: string; detail?: string };
-      if (errorPayload.message || errorPayload.detail) {
-        message = `DeepL translation failed: ${errorPayload.message ?? errorPayload.detail}`;
-      }
-    } catch {
-      // Ignore non-JSON error payloads and keep the status-based message.
-    }
-
-    throw new Error(message);
-  }
-
-  const payload = (await response.json()) as DeepLTranslateResponse;
-  const translatedTexts = payload.translations?.map((item) => item.text ?? "") ?? [];
-  const results = [...texts];
-
-  indexedTexts.forEach((item, index) => {
-    results[item.index] = translatedTexts[index] ?? item.text;
-  });
-
-  return results;
-}
-
-async function translateTextSafely(text: string): Promise<string> {
-  try {
-    return await translateText(text);
-  } catch (error) {
-    console.warn("[DeepL] translation failed", {
-      length: text.length,
-      message: toErrorMessage(error),
-    });
-    return text;
-  }
-}
-
-async function translateTextsSafely(texts: string[]): Promise<{ texts: string[]; notice?: string }> {
-  try {
-    return { texts: await translateTexts(texts) };
-  } catch (error) {
-    const message = toErrorMessage(error);
-
-    console.warn("[DeepL] translation failed", {
-      count: texts.length,
-      message,
-    });
-
-    return {
-      texts,
-      notice: `DeepL 번역에 실패해 원문으로 표시합니다. ${message}`.trim(),
-    };
-  }
-}
-
-function containsHangul(value: string): boolean {
-  return /[가-힣]/.test(value);
-}
-
 async function fetchPatentApiSearch(params: SearchParams): Promise<SearchResponse> {
   const page = params.page ?? 1;
   const size = Math.max(params.pageSize ?? DEFAULT_PAGE_SIZE, DEFAULT_PAGE_SIZE);
   const startedAt = Date.now();
-  const notices: string[] = [];
-
-  let keyword = params.q?.trim() ?? "";
-
-  if (keyword && containsHangul(keyword)) {
-    if (!hasDeepLCredentials()) {
-      notices.push("DeepL API 키가 없어 한국어 검색어를 일본어로 변환하지 못해 원문으로 검색했습니다.");
-    } else {
-      try {
-        const [translatedKeyword] = await translateTexts([keyword], { sourceLang: "KO", targetLang: "JA" });
-        if (translatedKeyword.trim()) {
-          keyword = translatedKeyword.trim();
-          notices.push("한국어 검색어를 일본어로 변환해 검색했습니다.");
-        }
-      } catch (error) {
-        notices.push(`한국어 검색어 번역에 실패해 원문으로 검색했습니다. ${toErrorMessage(error)}`.trim());
-      }
-    }
-  }
 
   const queryParts = [
-    keyword,
+    params.q?.trim(),
     params.patentNumber ? cleanPatentNumber(params.patentNumber) : undefined,
   ].filter(Boolean);
   const query = queryParts.length > 0 ? queryParts.join(" ") : "JP";
@@ -293,27 +177,26 @@ async function fetchPatentApiSearch(params: SearchParams): Promise<SearchRespons
 
   const data = (await response.json()) as PatentApiSearchResponse;
   const rawItems = data.items ?? [];
-  const titles = rawItems.map((item) => item.title ?? "");
-  const { texts: translatedTitles, notice: translationNotice } = await translateTextsSafely(titles);
 
-  const summaries: PatentSummary[] = rawItems.map((item, i) => {
+  const summaries: PatentSummary[] = rawItems.map((item) => {
     const publicationNumber = cleanPatentNumber(item.publicationNumber ?? item.id ?? "");
+    const fallbackTitle = item.title ?? "제목 없음";
+    const titleJa = decodeAndCompact(item.titleJa ?? fallbackTitle);
+    const titleKo = decodeAndCompact(item.titleKo ?? item.translatedTitle ?? item.titleTranslated ?? fallbackTitle);
+
     return {
-      id: cleanPatentNumber(item.id ?? ""),
+      id: cleanPatentNumber(item.id ?? publicationNumber),
       publicationNumber,
       applicationNumber: publicationNumber,
-      titleJa: compactText(decodeHtmlEntities(item.title ?? "제목 없음")),
-      titleKo: compactText(decodeHtmlEntities(translatedTitles[i] ?? item.title ?? "제목 없음")),
-      applicant: compactText(decodeHtmlEntities(item.applicant ?? "출원인 정보 없음")) || "출원인 정보 없음",
+      titleJa,
+      titleKo,
+      applicant: decodeAndCompact(item.applicant ?? "출원인 정보 없음") || "출원인 정보 없음",
       applicationDate: item.filingDate ?? "",
       publicationDate: "",
       ipcClasses: [],
       country: "JP",
     };
   });
-
-  if (translationNotice) notices.push(translationNotice);
-  if (!hasDeepLCredentials()) notices.push("DeepL API 키가 없어 번역은 원문 기준으로 표시합니다.");
 
   return {
     items: summaries,
@@ -322,7 +205,6 @@ async function fetchPatentApiSearch(params: SearchParams): Promise<SearchRespons
     pageSize: size,
     elapsedMs: Date.now() - startedAt,
     source: "patent-api",
-    notice: notices.length > 0 ? notices.join(" ") : undefined,
   };
 }
 
@@ -337,15 +219,15 @@ async function fetchPatentApiDetail(id: string): Promise<PatentDetailResponse> {
   }
 
   const data = (await response.json()) as PatentApiDetailResponse;
-  const titleJa = compactText(decodeHtmlEntities(data.title ?? "제목 없음"));
-  const abstractJa = compactText(decodeHtmlEntities(data.abstractText ?? "요약 정보 없음"));
-  const translation = await translateTextsSafely([titleJa, abstractJa]);
-  const [titleKo, abstractKo] = translation.texts;
+  const fallbackTitle = data.title ?? "제목 없음";
+  const fallbackAbstract = data.abstractText ?? data.abstract ?? "요약 정보 없음";
+  const titleJa = decodeAndCompact(data.titleJa ?? fallbackTitle);
+  const titleKo = decodeAndCompact(data.titleKo ?? data.translatedTitle ?? data.titleTranslated ?? fallbackTitle);
+  const abstractJa = decodeAndCompact(data.abstractJa ?? fallbackAbstract);
+  const abstractKo = decodeAndCompact(
+    data.abstractKo ?? data.translatedAbstract ?? data.abstractTranslated ?? fallbackAbstract,
+  );
   const publicationNumber = cleanPatentNumber(data.publicationNumber ?? data.id ?? id);
-
-  const notices: string[] = [];
-  if (!hasDeepLCredentials()) notices.push("DeepL API 키가 없어 번역은 원문 기준으로 표시합니다.");
-  if (translation.notice) notices.push(translation.notice);
 
   return {
     item: {
@@ -354,7 +236,7 @@ async function fetchPatentApiDetail(id: string): Promise<PatentDetailResponse> {
       applicationNumber: publicationNumber,
       titleJa,
       titleKo,
-      applicant: compactText(decodeHtmlEntities(data.applicant ?? "출원인 정보 없음")) || "출원인 정보 없음",
+      applicant: decodeAndCompact(data.applicant ?? "출원인 정보 없음") || "출원인 정보 없음",
       applicationDate: data.filingDate ?? "",
       publicationDate: "",
       ipcClasses: [],
@@ -366,7 +248,6 @@ async function fetchPatentApiDetail(id: string): Promise<PatentDetailResponse> {
       espacenetUrl: data.originalUrl ?? "",
     },
     source: "patent-api",
-    notice: notices.length > 0 ? notices.join(" ") : undefined,
   };
 }
 
@@ -378,14 +259,12 @@ export async function searchPatents(input: SearchParams): Promise<SearchResponse
   } catch (error) {
     console.warn("[patent-api] search failed", {
       params,
-      message: error instanceof Error ? error.message : String(error),
+      message: toErrorMessage(error),
     });
     const fallback = await searchMockPatents(params);
     return {
       ...fallback,
-      notice: `patent-api 검색에 실패하여 샘플 결과로 대체했습니다. ${
-        error instanceof Error ? error.message : ""
-      }`.trim(),
+      notice: `patent-api 검색에 실패하여 샘플 결과로 대체했습니다. ${toErrorMessage(error)}`.trim(),
     };
   }
 }
@@ -396,18 +275,30 @@ export async function getPatentDetail(id: string): Promise<PatentDetailResponse>
   } catch (error) {
     console.error("[patent-api] detail failed", {
       id,
-      message: error instanceof Error ? error.message : String(error),
+      message: toErrorMessage(error),
     });
     const fallback = await getMockPatentDetail(id);
     return {
       ...fallback,
-      notice: `patent-api 상세 조회에 실패하여 샘플 데이터로 대체했습니다. ${
-        error instanceof Error ? error.message : ""
-      }`.trim(),
+      notice: `patent-api 상세 조회에 실패하여 샘플 데이터로 대체했습니다. ${toErrorMessage(error)}`.trim(),
     };
   }
 }
 
 export async function translateTextToKorean(text: string) {
-  return translateTextSafely(text);
+  const response = await fetch(`${PATENT_API_BASE_URL}/api/translations`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ sourceText: text, sourceLang: "ja", targetLang: "ko" }),
+    cache: "no-store",
+  });
+
+  if (!response.ok) {
+    throw new Error(`patent-api translate failed: ${response.status}`);
+  }
+
+  const payload = (await response.json()) as PatentApiTranslateResponse;
+  return payload.translatedText ?? payload.text ?? text;
 }

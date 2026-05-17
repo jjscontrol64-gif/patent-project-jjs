@@ -53,7 +53,7 @@ export default function HomePage() {
           <div className="rounded-[1.75rem] border border-white/70 bg-white/80 p-6 shadow-card backdrop-blur">
             <div className="text-sm font-semibold text-brand-blue">연동</div>
             <p className="mt-3 text-sm leading-6 text-brand-muted">
-              SerpAPI 키를 넣으면 실데이터로 동작하고, 없으면 샘플 데이터로 흐름을 검증할 수 있습니다.
+              patent-api 연결이 가능하면 실데이터로 동작하고, 연결할 수 없으면 샘플 데이터로 흐름을 검증할 수 있습니다.
             </p>
           </div>
         </div>
