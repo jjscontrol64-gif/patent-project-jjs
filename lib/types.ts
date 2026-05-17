@@ -1,4 +1,4 @@
-export type SourceKind = "mock" | "serpapi";
+export type SourceKind = "mock" | "serpapi" | "patent-api";
 
 export type PatentSummary = {
   id: string;

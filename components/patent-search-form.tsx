@@ -1,8 +1,8 @@
 "use client";
 
 import type { KeyboardEventHandler } from "react";
-import { useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
+import { usePathname, useRouter } from "next/navigation";
 import { SearchParams } from "@/lib/types";
 import { cleanPatentNumber, createSearchHref, isPatentNumberLike } from "@/lib/utils";
 
@@ -12,17 +12,28 @@ type PatentSearchFormProps = {
   placeholder?: string;
 };
 
+function LoadingLabel({ label }: { label: string }) {
+  return (
+    <span className="inline-flex items-center gap-2">
+      <span className="h-3.5 w-3.5 rounded-full border-2 border-white/40 border-t-white motion-safe:animate-spin" />
+      <span>{label}</span>
+    </span>
+  );
+}
+
 export function PatentSearchForm({
   variant = "hero",
   initialValues,
   placeholder = "키워드, 특허번호, 출원인으로 검색",
 }: PatentSearchFormProps) {
   const router = useRouter();
+  const pathname = usePathname();
   const [q, setQ] = useState(initialValues?.q ?? initialValues?.patentNumber ?? "");
   const [dateFrom, setDateFrom] = useState(initialValues?.dateFrom ?? "2020-01-01");
   const [dateTo, setDateTo] = useState(initialValues?.dateTo ?? "2024-12-31");
   const [ipc, setIpc] = useState(initialValues?.ipc ?? "");
   const [showFilters, setShowFilters] = useState(variant === "hero");
+  const [isNavigating, setIsNavigating] = useState(false);
 
   const containerClass =
     variant === "hero"
@@ -49,8 +60,26 @@ export function PatentSearchForm({
     [dateFrom, dateTo, initialValues?.pageSize, ipc, q],
   );
 
+  useEffect(() => {
+    setIsNavigating(false);
+  }, [
+    pathname,
+    initialValues?.q,
+    initialValues?.patentNumber,
+    initialValues?.dateFrom,
+    initialValues?.dateTo,
+    initialValues?.ipc,
+    initialValues?.page,
+    initialValues?.pageSize,
+  ]);
+
+  const navigateTo = (href: string) => {
+    setIsNavigating(true);
+    router.push(href);
+  };
+
   const goToSearch = () => {
-    router.push(createSearchHref(searchParams));
+    navigateTo(createSearchHref(searchParams));
   };
 
   const goToPatent = () => {
@@ -58,11 +87,11 @@ export function PatentSearchForm({
     if (!raw) return;
 
     if (isPatentNumberLike(raw)) {
-      router.push(`/patent/${encodeURIComponent(cleanPatentNumber(raw))}`);
+      navigateTo(`/patent/${encodeURIComponent(cleanPatentNumber(raw))}`);
       return;
     }
 
-    router.push(createSearchHref({ ...searchParams, patentNumber: raw }));
+    navigateTo(createSearchHref({ ...searchParams, patentNumber: raw }));
   };
 
   const handleKeyDown: KeyboardEventHandler<HTMLInputElement> = (event) => {
@@ -91,9 +120,11 @@ export function PatentSearchForm({
           <button
             type="button"
             onClick={goToSearch}
-            className="ml-3 rounded-full bg-brand-blue px-4 py-2 text-sm font-medium text-white transition hover:opacity-95"
+            disabled={isNavigating}
+            className="ml-3 rounded-full bg-brand-blue px-4 py-2 text-sm font-medium text-white transition hover:opacity-95 disabled:cursor-not-allowed disabled:opacity-70"
+            aria-busy={isNavigating}
           >
-            검색
+            {isNavigating ? <LoadingLabel label="검색 중" /> : "검색"}
           </button>
         ) : null}
       </div>
@@ -102,14 +133,18 @@ export function PatentSearchForm({
         <button
           type="button"
           onClick={goToSearch}
-          className="rounded-md bg-brand-blue px-6 py-3 text-sm font-medium text-white transition hover:-translate-y-0.5"
+          disabled={isNavigating}
+          className="rounded-md bg-brand-blue px-6 py-3 text-sm font-medium text-white transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-70"
+          aria-busy={isNavigating}
         >
-          특허 검색
+          {isNavigating ? <LoadingLabel label="검색 중" /> : "특허 검색"}
         </button>
         <button
           type="button"
           onClick={goToPatent}
-          className="rounded-md border border-[#dadce0] bg-brand-paper px-6 py-3 text-sm text-brand-ink transition hover:bg-white"
+          disabled={isNavigating}
+          className="rounded-md border border-[#dadce0] bg-brand-paper px-6 py-3 text-sm text-brand-ink transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
+          aria-busy={isNavigating}
         >
           특허번호 직접 조회
         </button>
