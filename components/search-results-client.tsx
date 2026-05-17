@@ -29,7 +29,7 @@ export function SearchResultsClient({ response, searchParams }: SearchResultsCli
     return Array.from(pages).sort((a, b) => a - b);
   }, [response.page, totalPages]);
 
-  const sourceLabel = response.source === "serpapi" ? "실시간 SerpAPI" : "샘플 데이터";
+  const sourceLabel = response.source === "patent-api" ? "patent-api" : "샘플 데이터";
 
   return (
     <div className="min-h-screen bg-transparent pb-16">

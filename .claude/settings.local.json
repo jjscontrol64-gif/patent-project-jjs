@@ -14,7 +14,16 @@
       "Bash(python:*)",
       "Bash(cd:*)",
       "Bash(set:*)",
-      "Bash(start:*)"
+      "Bash(start:*)",
+      "Bash(java -version)",
+      "Bash(mvn -version)",
+      "Bash(gradle -version)",
+      "PowerShell(java *)",
+      "PowerShell(mvn *)",
+      "WebFetch(domain:localhost)",
+      "Bash(curl *)",
+      "Bash(node .node_modulestypescriptbintsc *)",
+      "Bash(node .\\\\node_modules\\\\typescript\\\\bin\\\\tsc *)"
     ]
   }
 }

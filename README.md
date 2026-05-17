@@ -36,18 +36,16 @@ Vercel에 배포 ( https://patent-project-jjs.vercel.app/ )
 
 `.env.local`에서 관리:
 
-- `SERPAPI_API_KEY`
-- `DEEPL_API_KEY`
+- `PATENT_API_BASE_URL` (선택, 기본값: `http://localhost:8080`)
 - `DEEPL_API_URL` (선택)
 
 동작 규칙:
-- `SERPAPI_API_KEY`가 없으면 검색/상세 조회는 mock 데이터로 대체된다.
-- `DEEPL_API_KEY`가 없으면 번역은 원문 기준으로 표시된다.
+- `patent-api`에 연결할 수 없으면 검색/상세 조회는 mock 데이터로 대체된다.
 
 ## 구조 요약
 
 - `lib/patent-service.ts`
-  검색, 상세, DeepL 번역, SerpAPI 연동, mock fallback의 중심 로직
+  검색, 상세, DeepL 번역, patent-api 연동, mock fallback의 중심 로직
 - `lib/utils.ts`
   검색 파라미터 정규화와 문자열 유틸리티
 - `lib/types.ts`
@@ -60,8 +58,8 @@ Vercel에 배포 ( https://patent-project-jjs.vercel.app/ )
 ## 주의사항
 
 - Next 16 App Router에서는 `page.tsx`의 `params`, `searchParams`를 비동기 값으로 처리해야 한다.
-- 한국어 검색어는 SerpAPI 검색 전에 일본어로 번역해서 사용한다.
-- 날짜 필터는 출원일 기준으로 처리하며, SerpAPI에는 `filing:YYYYMMDD` 형식으로 전달해야 한다.
+- 한국어 검색어는 patent-api 검색 전에 일본어로 번역해서 사용한다.
+- 날짜 필터는 출원일 기준으로 처리하며, patent-api에는 `YYYYMMDD` 형식으로 전달한다.
 - 번역 실패가 상세 페이지 전체 오류로 이어지지 않도록 유지해야 한다.
 
 ## 검증
